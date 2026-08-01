@@ -1,7 +1,15 @@
 import asyncio
+import os
+import sys
 import discord
 from discord.ext import commands
+from dotenv import load_dotenv
 import yt_dlp
+
+load_dotenv()
+
+MAX_QUEUE_SIZE = 50
+MAX_VOLUME = 150
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -93,6 +101,21 @@ async def on_ready():
     print(f"Conectado como {bot.user}")
 
 
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.send("Argumento inválido.")
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("Faltou informar um argumento.")
+        return
+
+    print(f"Erro no comando {ctx.command}: {error}", file=sys.stderr)
+    await ctx.send("Ocorreu um erro ao executar esse comando.")
+
+
 @bot.command(name="join")
 async def join(ctx):
     if ctx.author.voice is None or ctx.author.voice.channel is None:
@@ -118,6 +141,10 @@ async def leave(ctx):
         await ctx.send("Eu não estou em nenhum canal de voz.")
         return
 
+    if ctx.author.voice is None or ctx.author.voice.channel != player.voice_client.channel:
+        await ctx.send("Você precisa estar no mesmo canal de voz que eu.")
+        return
+
     player.queue.clear()
     player.current = None
     await player.voice_client.disconnect()
@@ -134,6 +161,14 @@ async def play(ctx, *, argumento: str = None):
             await ctx.send("Você precisa estar em um canal de voz.")
             return
         player.voice_client = await ctx.author.voice.channel.connect()
+
+    if ctx.author.voice is None or ctx.author.voice.channel != player.voice_client.channel:
+        await ctx.send("Você precisa estar no mesmo canal de voz que eu.")
+        return
+
+    if len(player.queue) >= MAX_QUEUE_SIZE:
+        await ctx.send(f"A fila está cheia (máximo de {MAX_QUEUE_SIZE} músicas).")
+        return
 
     query = argumento
 
@@ -162,9 +197,18 @@ async def play(ctx, *, argumento: str = None):
 @bot.command(name="stop")
 async def stop(ctx):
     player = get_player(ctx.guild)
+
+    if player.voice_client is None or not player.voice_client.is_connected():
+        await ctx.send("Eu não estou em nenhum canal de voz.")
+        return
+
+    if ctx.author.voice is None or ctx.author.voice.channel != player.voice_client.channel:
+        await ctx.send("Você precisa estar no mesmo canal de voz que eu.")
+        return
+
     player.queue.clear()
 
-    if player.voice_client is not None and player.voice_client.is_playing():
+    if player.voice_client.is_playing():
         player.voice_client.stop()
 
     player.current = None
@@ -173,8 +217,8 @@ async def stop(ctx):
 
 @bot.command(name="volume")
 async def volume(ctx, nivel: int = None):
-    if nivel is None or nivel < 1:
-        await ctx.send("Use `.volume` seguido de um número a partir de 1.")
+    if nivel is None or nivel < 1 or nivel > MAX_VOLUME:
+        await ctx.send(f"Use `.volume` seguido de um número entre 1 e {MAX_VOLUME}.")
         return
 
     player = get_player(ctx.guild)
@@ -194,4 +238,9 @@ async def help_command(ctx):
     await ctx.send(embed=embed)
 
 
-bot.run("PUT_YOUR_TOKEN_HERE")
+DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN")
+
+if not DISCORD_TOKEN:
+    sys.exit("DISCORD_TOKEN não definido no ambiente.")
+
+bot.run(DISCORD_TOKEN)
